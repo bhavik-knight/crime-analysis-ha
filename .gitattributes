@@ -1,3 +1,4 @@
+*.csv filter=lfs diff=lfs merge=lfs -text
 *.zip filter=lfs diff=lfs merge=lfs -text
 /crime_unemployment.csv filter=lfs diff=lfs merge=lfs -text
 /crime_us_1975_2015.csv filter=lfs diff=lfs merge=lfs -text
