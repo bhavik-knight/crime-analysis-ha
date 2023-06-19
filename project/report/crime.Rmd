@@ -1,0 +1,635 @@
+---
+title: "Crime Analysis"
+subtitle: "A Comprehensive Study of Factors influencing Crime"
+author: 
+    - Bhavik Bhagat (x2020coq@stfx.ca)
+    - Edwin Chacko (x2020gff@stfx.ca)
+output: pdf_document
+--- 
+
+# Abstract
+
+# Introduction
+
+
+# Datasets:
+1. crime_us
+2. crime_us_homicide
+3. crime_unemployment
+4. highschool_dropout
+
+
+# Data Wrangling : Tidy, Transform
+
+## load the external libraries
+The libraries that we used for our projects are listed below. Installing the missing libraries using `install.packages()` function is recommended before importing the required library using `library()` function.
+
+<!-- load required library -->
+```{r message=FALSE, warning=FALSE, include=TRUE, paged.print=FALSE}
+###############################################################################
+library(tidyverse)
+library(reshape)
+library(modelr)
+library(dplyr)
+library(splines)
+library(rmarkdown)
+library(sf)
+library(tmap)
+library(leaflet)
+library(tmaptools)
+options(warn=-1)
+###############################################################################
+```
+<!-- loading external library done -->
+
+
+
+<!-- read the data sets -->
+<!-- crime us, crime homicide, unemployment, dropout-->
+```{r}
+###############################################################################
+# load crime_us_1975_2015 data
+raw_crime_us <- read.csv("data/crime_us_1975_2015.csv")
+
+# load homicide data
+raw_homicide <- read.csv(
+    "data/crime_us_homicide_1980_2014.csv",
+    stringsAsFactors=FALSE,
+    na.strings=c("NA", "N/A", "Uknown*", "NULL", ".P")
+)
+
+# load unemployment data
+raw_unemployment <- read.csv("data/crime_unemployment_1976_2014.csv")
+
+# load high school dropout data
+raw_dropout <- read.csv("data/highschool_dropout.csv")
+###############################################################################
+```
+
+
+<!-- data wrangling explanation-->
+We used `read.csv` to use our datasets as they were in csv format. After that
+we used *pipeline of operations* to get all the datasets in properly formatted 
+way that could generate robust and consistent results. These operations are as 
+follows in not a particular order.
+
+## Pipeline Operations:
+* drop_na()
+* rename()
+* select()
+* filter()
+* mutate()
+* transmute()
+* summarise(), group_by()
+* join()
+* melt()
+
+After reading the datasets, we chose to dropped the missing values to get some
+consistency in the analysis process. Since we planned to join our datasets, we 
+chose to rename some columns to avoid naming conflicts. We selected features as 
+explained in the earlier section. For modelling purpose, we decided to do it over 
+3 decades, that is why we filtered data between 1980 to 2009. We summarized the 
+data differnet ways as we neeed for the analysis. Sometimes by years, by states,
+or sometimes by demographics (gender, race) etc. In addition, whenever we added
+new columns using mutate, or sometimes, we created a whole new dataframe using 
+transmute.
+
+For modelling purpose, we decided to join our datasets, we used `merge()` to 
+perform *inner_join* for that on the year column that we needed. There are 
+different kind of joins like *outer_join*, *right_join*, *left_join*, *cross_join*
+for different kind of merging. 
+
+While plotting initially, we discovered that while plotting various kinds of crimes on the same plot, it was not coloring the way we expected it to, that is because the variable violent_crimes is not a factor with 4 levels of crime. That is what we needed to accomplish the task. After doing some research, we found out how to do this as follows.
+
+- Split the dataset in two parts such a way that the variable violent_crimes remain as common between splits.
+- Reshape the split having types of crimes such that each type of crime becomes a level of the factor violent_crimes using melt() function.
+- Join the two parts on the common variable. We used inner_join() function to achieve this. The result was stored in a data frame.
+
+<!-- code for data wrangling -->
+```{r}
+###############################################################################
+# crime_us
+raw_crime_us %>% drop_na() %>%
+    mutate(
+        alpha_code = str_split_fixed(agency_jurisdiction, ", ", n = 2)[, 2]
+    ) %>%
+    select(
+        year = report_year,
+        alpha_code,
+        population,
+        violent_crimes,
+        homicides,
+        rapes,
+        assaults,
+        robberies
+    ) %>%
+    filter(year %in% 1980:2009) %>%
+    arrange(alpha_code) -> crime_us
+#################################################################################
+
+################################################################################
+# crime_homicide
+# format the data frame in desired format
+as.data.frame(
+    raw_homicide %>% drop_na() %>%
+    filter(
+        Year %in% 1980:2009,
+        Victim.Race != "Unknown",
+        Victim.Sex != "Unknown",
+        Perpetrator.Race != "Unknown",
+        Perpetrator.Sex != "Unknown",
+        Weapon != "Unknown",
+    ) %>%
+    select(
+        Year,
+        Victim.Sex:Victim.Race,
+        Perpetrator.Sex:Perpetrator.Race,
+        Weapon
+    )
+) -> homicides
+################################################################################
+
+################################################################################
+# summarize by years, states, but need a data frame, not tibble
+as.data.frame(
+    crime_us  %>%
+    group_by(year) %>%
+    summarise_each(funs(sum), population:robberies)
+) -> crime_by_years
+
+as.data.frame(
+    raw_homicide %>%
+    group_by(Year) %>%
+    summarise_each(
+        funs(mean), Victim.Age, Perpetrator.Age
+    )
+) -> homicides_victim_perpetrator_age
+################################################################################
+
+################################################################################
+# unemployment
+# make column names lower case to be compatible with other data sets
+names(raw_unemployment) <- tolower(names(raw_unemployment))
+
+as.data.frame(
+    raw_unemployment %>% drop_na() %>% group_by(year) %>%
+        summarise_at(vars(unemployment), sum) %>%
+    filter(year %in% 1980:2009)
+) -> unemployment_us
+
+
+as.data.frame(
+    raw_unemployment %>%
+    drop_na() %>%
+    select(year, state, unemployment) %>%
+    filter(year %in% 1980:2014)
+) -> unemployment_us_by_states
+
+################################################################################
+# dropouts
+# Selecting columns and eliminating few rows
+as.data.frame(
+    raw_dropout[c(4:54), ] %>%
+    select(X:X.5)
+)-> dropouts
+names(dropouts) <- c("states","1970-1979","1980-1989","1990-1999","2000-2014","2015-2019")
+################################################################################
+# basic processing is complete, further processing is done as per requirement
+################################################################################
+```
+
+### Helper Functions
+We created some helper functions to help at different places. They are as follows:
+
+- `get_crime_rate()`
+In data sets, we have several numbers which can be varying in a wide range, so we converted those into percentages or rates whatever was relevant to the variables.
+- `get_normal()`
+Furthermore, whenever needed, we normalized the data-sets to get it a proper range, with mean 0 and std-dev 1. In addition to that while plotting, we used log-scale at times so that we would not overlook any minor changes that could have been missed otherwise.
+- `get_decade()`
+We wanted a decade-wise analysis, so we had to create a decade for the given number, and 
+then at some point, use that decade as a factor in plotting functions.
+
+```{r}
+################################################################################
+# helper functions
+# crime rate is crime reported per 100,000 population
+get_crime_rate <- function(reported_crimes, total_population) {
+    crime_rate <- (reported_crimes / total_population) * 10^5
+    crime_rate
+}
+
+# to scale the dataset use this function
+get_normal <- function(x) {
+    mu <- mean(x)
+    std <- sd(x)
+    score <- ((x) - mu)^2 / std
+    score
+}
+
+# to convert a given year to its decade
+get_decade <- function(x) {
+    x - x %% 10
+}
+################################################################################
+
+```
+
+
+These are some more steps in processing the data. For different analysis, we needed to summarise our dataset different ways. Those all extra processing steps are in the code chunk as follows.
+```{r}
+################################################################################
+# extra pre-processing for plots
+################################################################################
+# for crime-rate by the years
+as.data.frame(
+    crime_by_years %>%
+    melt(id=c("year", "population", "violent_crimes")) %>%
+    transmute(
+        year,
+        rate_violent_crimes=get_crime_rate(violent_crimes, population),
+        crime_type=variable,
+        crime_recorded=value,
+        rate_crime_type=get_crime_rate(crime_recorded, population)
+    )
+) -> years_crime_rate
+
+# normalized crime_rate by years
+as.data.frame(years_crime_rate %>% transmute(
+    year = year,
+    rate_violent_crimes = get_normal(log(rate_violent_crimes)), # check w/ log
+    crime_type = crime_type,
+    rate_crime_type = get_normal(log(rate_crime_type)), # check w/ log
+)) -> normalized_years_crime_rate
+################################################################################
+
+################################################################################
+# make decade a factor having 10 years, crime_us by years
+# also summarise the data
+as.data.frame(
+    crime_us  %>%
+        group_by(year) %>%
+        summarise_at(
+            .vars=c("population", "violent_crimes", "homicides",
+            "rapes", "assaults", "robberies"),
+            .funs=sum
+        ) %>%
+        mutate(decade=factor(get_decade(year)))
+) -> crime_us_by_years
+###############################################################################
+
+###############################################################################
+# join the crime_us and unemployment datasets on year, state (alpha_code)
+merge(x = crime_us_by_years, y = unemployment_us, by="year") -> crime_unemployment
+################################################################################
+
+###############################################################################
+# reshape data set to create violent crime as a factor of other crimes
+# divide dataset into two parts
+crime_unemployment %>% melt.data.frame (
+    id.vars=c(
+        "year",
+        "decade",
+        "population",
+        "unemployment",
+        "violent_crimes"
+    ),
+    variable_name="crime_type"
+) -> crime_unemployment
+###############################################################################
+
+
+################################################################################
+# convert crime number into crime rates
+crime_unemployment %>% transmute(
+    year, decade, population, unemployment_rate = unemployment,
+    violent_crimes = get_crime_rate(violent_crimes, population),
+    crime_rate = get_crime_rate(value, population), crime_type
+) -> crime_unemployment_rate
+################################################################################
+
+
+################################################################################
+# normalize the dataset
+crime_unemployment_rate %>% transmute(
+    year, decade, unemployment_rate = get_normal(unemployment_rate),
+    violent_crimes = get_normal(violent_crimes),
+    crime_rate = get_normal(crime_rate), crime_type
+) -> scaled_crime_unemployment_rate
+################################################################################
+
+################################################################################
+# Loading US Map
+options(scipen=999)
+us_map <- st_read(
+    "shapefiles/cb_2018_us_state_500k.shp", 
+    stringsAsFactors = FALSE,
+    quiet=TRUE)
+
+# merge geographic map data and unemployment data of US
+geomap_data <- inner_join(us_map, unemployment_us_by_states, by = c("STUSPS"="state"))
+################################################################################
+
+################################################################################
+# processing for dropout
+# Splitting "%"
+dropouts$`1970-1979` <- str_split_fixed(dropouts$`1970-1979`,"%",2)[,1]
+dropouts$`1980-1989` <- str_split_fixed(dropouts$`1980-1989`,"%",2)[,1]
+dropouts$`1990-1999` <- str_split_fixed(dropouts$`1990-1999`,"%",2)[,1]
+dropouts$`2000-2014` <- str_split_fixed(dropouts$`2000-2014`,"%",2)[,1]
+dropouts$`2015-2019` <- str_split_fixed(dropouts$`2015-2019`,"%",2)[,1]
+
+# Converting char to int
+dropouts$`1970-1979` <- as.numeric(as.character(dropouts$`1970-1979`))
+dropouts$`1980-1989` <- as.numeric(as.character(dropouts$`1980-1989`))
+dropouts$`1990-1999` <- as.numeric(as.character(dropouts$`1990-1999`))
+dropouts$`2000-2014` <- as.numeric(as.character(dropouts$`2000-2014`))
+dropouts$`2015-2019` <- as.numeric(as.character(dropouts$`2015-2019`))
+
+# data processing
+dropouts %>% mutate(decade_sum=rowSums(dropouts[2:6])) %>%
+    melt(
+        id=c("states", "decade_sum"),
+        variable.name=decades,
+        value.name=dropout_rate
+    ) -> dropouts
+names(dropouts) <- c("states", "decade_sum", "decades", "dropout_rate")
+################################################################################
+# extra pre-processing for plots done!
+################################################################################
+```
+
+<!-- EDA + Viz -->
+# Exploratory Data Analysis and Visualization
+
+The analysis are discussed in the subsection below. For visualization depending on the types of the variables being analyzed, we have generated variety of plots. i.e. scatter plots, line charts, bar charts, box-plots, geo-map, heat-map, modelling, residual plots. The functions related to that are below in related code chunks according to analysis.
+
+
+## Violent crime-rate by years
+The first question we wanted to answer was the trend of violent crimes rate, i.e., is it increasing or decreasing over the years 1980-2014? To calculate the crime_rate (per capita)
+we used the following equation.
+
+${crime\_rate (per\ capita)} = \frac {crime\_reported} {population} * {10^5}$
+
+```{r}
+################################################################################
+# plot several crimes over the year
+normalized_years_crime_rate %>% 
+    ggplot(aes(year, rate_crime_type)) +
+    geom_line(aes(color=crime_type)) +
+    geom_point(aes(color=crime_type), shape = 15) +
+    labs(
+        title="Crime Rate for various types of Violent Crimes",
+        x="years (1980-2014)",
+        y="normalized_crime_rate (log-scale)"
+    ) + theme_bw()
+###############################################################################
+```
+The plot shows that it was increasing from 1980-1992, where 1992 was the peak, and then it declined over the years.
+
+
+## Correlation: Unemployment
+We think that there is a correlation between unemployment and crime rate. So we are trying to plot the data to check that.
+```{r}
+################################################################################
+# boxplot of crime-rate of different types of crimes by decades
+crime_unemployment_rate %>%
+    ggplot(aes(x=decade, y=unemployment_rate)) +
+    stat_boxplot(geom="errorbar", width=0.2) +
+    geom_boxplot(aes(fill=decade), outlier.shape=NA, width=0.2) +
+    theme_bw() +
+    ylim(200, 400) +
+    labs(
+        title="Unemployment rate is decreasing by the decade.",
+        fill="decades",
+        x="decades",
+        y="unemployment_rate (per capita)"
+    )
+################################################################################
+```
+The unemployment_rate has decreased over the decades. In 1980s, it unemployment_rate was around 350, means 350 people per 100,000 people were unemployed. In 1990s, that declined to 275, but spread around that was a bit more compared to 1980s. In 2000s, unemployment_rate further dropped to 260, but this time spread is also the least in all decades.
+<!-- unemployment_rate - decade-wise done -->
+
+<!-- geo-mapping -->
+## Unemployment Geomapping & state-wise crime-rate
+The state-wise analysis shows that NJ and GA have the most unemployment rate.
+```{r}
+################################################################################
+# plotting geo-map
+geomap_data %>%
+    ggplot() + geom_sf(aes(fill=unemployment)) +
+    scale_fill_gradient(low="#56B1F7", high="#132B43") + theme_bw() +
+    coord_sf(xlim=c(-180, -45), ylim=c(20,80), expand=FALSE) +
+    labs(
+        title="Unemployment Rate by States",
+        fill="unemployment_rate",
+        x="latitude",
+        y="longitude"
+    )
+################################################################################
+```
+
+## Correlation: Education
+In one of the research papers we studied, it was mentioned that high school dropout rate has positive correlation with violent crimes. Higher the high school dropout rate, higher the violent crime rate rather than other kind of crimes such as property crime. That is why we decided to investigate whether education has an impact on the violent crime-rate.
+
+For that, we analyzed high-school dropout dataset from which we collected % of high school dropouts over the years. This is not enough to draw conclusions independently, that is why we had to collect more information, for that we investigated one of the datasets about homicides just to collect average age of perpetrators. We found that average age of perpetrators is uniform throughout about 20 years, which is 5-6 years more than high school dropouts.
+
+```{r}
+################################################################################
+# perpetrator's age, to analyze w.r.t. education dropout_rate
+homicides_victim_perpetrator_age %>%
+    ggplot(aes(Year, Perpetrator.Age)) +
+    geom_bar(aes(fill=Perpetrator.Age), stat="identity", color="darkblue") +
+    labs(title="Perpetrator average age by years") + theme_bw()
+################################################################################
+```
+
+So, when we combined this two information, we can say that, after 5-6 years after a potential perpetrator drops out from school, they are likely to commit the crime. To make the analysis relevant, we had to collect high school dropouts' rates from at least 5-6 years earlier from our period of analysis of crime. Also notice that since highschool dropout rate is decreasing over the years, it have some impact on crime-rate as well, which is to be investigated.
+```{r}
+################################################################################
+# high school dropout plot
+dropouts %>%
+    ggplot(aes(decades, dropout_rate)) +
+    geom_bar(aes(fill=decades), stat="identity") +
+    labs(
+        title="High school dropout rate is decreasing",
+        x="years (1980-2019)",
+        y="% of dropouts"
+    ) + theme_bw()
+################################################################################
+
+
+
+```
+
+## Demographic Analysis
+
+## Weapons and Victims
+
+## Crime-rate trend by decades
+The previous result showed that crime rate was increasing in early 90s, and then it decreased, although the rate of which were varying. Here, we are trying to generate box-plots to get some more details.
+```{r}
+################################################################################
+# boxplot of unemployment by decades
+crime_unemployment_rate %>%
+    ggplot(aes(x=decade, y=crime_rate)) +
+    stat_boxplot(geom="errorbar", width=0.4) +
+    geom_boxplot(aes(fill=decade), outlier.shape=NA, width=0.4) +
+    facet_wrap(.~crime_type, scales="free_y", nrow=1) +
+    theme_bw() + theme(legend.position="bottom") +
+    labs(
+        title="Trend of various type of crimes by decades",
+        fill="decades",
+        x="decades",
+        y="crime_rate (per capita)"
+    )
+################################################################################
+```
+The trend was different for various crimes. The crime_rate increased from 1980s to 1990s, and decreased from 1990s to 2000s for all crimes, except for rapes, which was declining throughout the decades compared to previous decades. Overall, spread around the median was least in the 2000s, compared to other to decades for different crimes. But assault and robberies rate were very high compared to homicides and rapes, looking at the scale. Thus, facet helps in comparing all this plots side-by-side.
+
+
+## Modelling
+For modelling purpose, we used two continuous variables. The independent variable is
+*unemployment_rate* and the dependent variable is *crime_rate*. Although we considered
+including another independent variable *dropout_rate* of high school students. Though
+that data in that dataset are already given decadewise. Should we include that data
+in out modelling, we would get only one data-point for each decade, that would not be ideal for modelling as the other independent variable *unemployment_rate* has data for each year
+in that decade, which would give us good enough data points to build our model. Hence, we are not considering the *dropout_rate* in our modelling for now, to discover more interesting patterns. But there is a scope to include such independent variables should we get proper data to include in our study.
+
+In our previous studies, we found that crimes were evolving differently in the different decades. That is why we decided to do a decade-wise analysis to see if we can find any interesting patterns in that. The code chunk for that is here.
+
+
+```{r}
+################################################################################
+# model the unemployment and crime rate
+# divide dataset into 3 decades to build robust models according to decades
+crime_unemployment_rate %>% filter(year==1980:1989) -> data_80
+crime_unemployment_rate %>% filter(year==1990:1999) -> data_90
+crime_unemployment_rate %>% filter(year==2000:2009) -> data_00
+
+
+# try to generate different models, linear, non-linear
+lm(violent_crimes ~ unemployment_rate, data_80) -> linear_80
+lm(violent_crimes ~ unemployment_rate, data_90) -> linear_90
+lm(violent_crimes ~ unemployment_rate, data_00) -> linear_00
+
+lm(violent_crimes ~ ns(unemployment_rate, 3), data_80) -> spline3_80
+lm(violent_crimes ~ ns(unemployment_rate, 3), data_90) -> spline3_90
+lm(violent_crimes ~ ns(unemployment_rate, 3), data_00) -> spline3_00
+
+
+lm(violent_crimes ~ log(unemployment_rate), data_80) -> log_80
+lm(violent_crimes ~ log(unemployment_rate), data_90) -> log_90
+lm(violent_crimes ~ log(unemployment_rate), data_00) -> log_00
+
+
+data_80 %>%
+    data_grid(unemployment_rate=seq_range(unemployment_rate, n=100))%>%
+    gather_predictions(linear_80, spline3_80, log_80,
+                       .pred="predicted_violent_crimes") %>%
+    mutate(decade=1980) -> grid_80
+
+data_90 %>%
+    data_grid(unemployment_rate=seq_range(unemployment_rate, n=100))%>%
+    gather_predictions(linear_90, spline3_90, log_90,
+                       .pred="predicted_violent_crimes") %>%
+    mutate(decade=1990) -> grid_90
+
+data_00 %>%
+    data_grid(unemployment_rate=seq_range(unemployment_rate, n=100))%>%
+    gather_predictions(linear_00, spline3_00, log_00,
+                       .pred="predicted_violent_crimes") %>%
+    mutate(decade=2000) -> grid_00
+
+
+# merge all grids
+merge(grid_80, grid_90, all.x=TRUE, all.y=TRUE) -> grid_8090
+merge(grid_8090, grid_00, all.x=TRUE, all.y=TRUE) -> grid
+
+
+# plot the models
+ggplot(crime_unemployment_rate, aes(unemployment_rate, violent_crimes)) +
+    geom_point() +
+    geom_line(
+        data=grid,
+        aes(y=predicted_violent_crimes, color=model, linetype=factor(model)),
+        size=1.5
+    ) +
+    facet_wrap(
+        .~decade,
+        scales="free_y",
+    ) + theme_bw() + theme(legend.position="bottom") +
+    labs(
+        title="Models: Violent Crime-rate vs Unemployment-rate by the decades.",
+        color="different models",
+        linetype="different models",
+        y="crime_rate (per capita)",
+        x="unemployment_rate (per capita)"
+    )
+
+
+# generate the error in predictions, residuals
+data_80 %>%
+    transmute(
+        decade,
+        unemployment_rate,
+        linear=resid(linear_80),
+        spline3=resid(spline3_80),
+        log=resid(log_80),
+    ) %>%
+    melt(id=c("decade", "unemployment_rate")) -> residuals_80
+names(residuals_80) = c("decade", "unemployment_rate", "model", "residual")
+
+data_90 %>%
+    transmute(
+        decade,
+        unemployment_rate,
+        linear=resid(linear_90),
+        spline3=resid(spline3_90),
+        log=resid(log_90),
+    ) %>%
+    melt(id=c("decade", "unemployment_rate")) -> residuals_90
+names(residuals_90) = c("decade", "unemployment_rate", "model", "residual")
+
+data_00 %>%
+    transmute(
+        decade,
+        unemployment_rate,
+        linear=resid(linear_00),
+        spline3=resid(spline3_00),
+        log=resid(log_00),
+    ) %>%
+    melt(id=c("decade", "unemployment_rate")) -> residuals_00
+names(residuals_00) = c("decade", "unemployment_rate", "model", "residual")
+
+
+# merge all residuals
+merge(residuals_80, residuals_90, all.x=TRUE, all.y=TRUE) -> residuals_8090
+merge(residuals_8090, residuals_00, all.x=TRUE, all.y=TRUE) -> residuals
+
+
+# plot the residuals
+ggplot(residuals, aes(unemployment_rate, residual)) +
+    geom_point(aes(color=model, shape=model), size=2) + geom_hline(yintercept=0) +
+    facet_wrap(.~decade, scales="free_y") +
+    theme_bw() + theme(legend.position="bottom") +
+    labs(
+        title="Residuals for the Models: Linear, Log, Spline3",
+        color="Models", shape="Models",
+        x="unemployment_rate (per capita) - predictions",
+        y="residuals (by various models)"
+    )
+################################################################################
+```
+Interesting patterns emerged here. Earlier we proposed a *positive correlation between crime_rate and unemployment_rate* in our analysis. But decade-wise analysis shows different results. In 1980s there was a negative correlation between those two, and in 1990s that trend reversed and we found a positive correlation, while in 2000s, there was no correlation between those two variables. That was astonishing result.
+
+Why that is different from our previous hypothesis? We think that there can be some lurking variables affecting the results. We didn't include *dropout_rate* in our analysis. That can be one of the reaons. As explained earlier, we tried to incorporate that variable in results, but the data for that was not in yearly manner for the decades, so only one point for each decade wasn't enough to do modelling. There can be other lurking variables too, but that also is for the future work to find such variables and model according to that.
+
+Now, we have 3 different models. One is *linear*, and two non-linear - *logarithmic* and *spline of degree 3*. We can see that in 80s, and 90s all models are doing good job in capturing the data, but in 2000s none of our model worked well. We can verify that results using the *residual plot*. In that plot 80s, 90s shows the randomness, that means, errors are randomized, so we missed some data that are random. That means we captured overall pattern nicely. But in 2000s, residual plot is not that random that means our models didn't work well there.
+
+Statistically, we want our errors to be normally distributed. The better bell-shaped curve, the more robust the model. Here, our residuals shows the difference between actual and predicated crime_rate (which is error). Now, if we try to project our residuals for different models on to y-axis, we get a distribution of error. The *spline of degree 3* gives better bell-shaped curve than other models. Because for that model, residuals are dense around 0-error line, and as it moves further from that line, we find fewer points. So compared to *linear* or *log* models, it did better job overall, in 80s, and 90s. And even in the previous plot it was clearly visible that *spline of degree 3* was passing through most of our data points for those two decades. In 2000s, none of our model worked, hence if we get that distribution curve, it won't be a proper bell-shaped curve that is desired.
+
+
+# Conclusion, Future Work
+
+
+# References

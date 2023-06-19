@@ -1,0 +1,23 @@
+reading csv, with some unwanted stuff not loaded from the beginning
+https://stackoverflow.com/questions/49727026/remove-non-numeric-values-unknown-in-my-data-frame
+
+get summary if differnet features
+https://stackoverflow.com/questions/36822672/summarize-different-columns-with-different-functions
+
+removing samples with NA values
+https://stackoverflow.com/questions/28857653/removing-na-observations-with-dplyrfilter
+
+crime rate calculations:
+https://oag.ca.gov/sites/all/files/agweb/pdfs/cjsc/prof10/formulas.pdf
+
+bar chart error: Fix: stat="indentity"
+https://stackoverflow.com/questions/61068031/error-stat-count-can-only-have-an-x-or-y-aesthetic
+
+passing column to function problem: Fix: "enquo"
+https://leaherb.com/pass-column-name-as-parameter-to-a-function-using-dplyr/
+
+To make color based on variables, while plottig several layered plots (aka line). Helps color coding legends. In my dataset make violent_crimes a column that has 4 different types (levels) aka, homicides, rapes, assaults, robberies 
+https://stackoverflow.com/questions/10349206/add-legend-to-ggplot2-line-plot
+
+transform tibble to dataframe
+https://stackoverflow.com/questions/50903630/transform-tibble-to-data-frame-with-column-headers

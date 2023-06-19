@@ -1,0 +1,9 @@
+Project title and abstract
+Prepare a document (.doc, .txt, .pdf, etc.) with the following details:
+Title: provide the title of your project. This should reflect the problem that you will work on.
+Abstract (250-300 words max): provide a motivation for the problem, source of datasets, and highlight questions or hypotheses you will tackle.
+
+Notes:
+
+Make sure your Name, Student Number, and StFX Email are included in a comment at the top of your document.
+This is a group submission. Any member can submit on behalf of the team.
